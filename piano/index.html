@@ -1,81 +1,127 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>AI 數位物理鋼琴</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 數位物理實驗室 - 8鍵鋼琴</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #121212; color: white; }
-        .piano { display: flex; justify-content: center; margin-top: 50px; }
-        .key { width: 60px; height: 200px; border: 1px solid #333; margin: 5px; border-radius: 0 0 5px 5px; cursor: pointer; background: white; color: black; transition: 0.1s; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; font-weight: bold; }
-        .key.active { background: #e94560; color: white; transform: translateY(5px); }
-        .btn { padding: 15px 30px; font-size: 1.2em; cursor: pointer; background: #e94560; color: white; border: none; border-radius: 5px; margin: 20px; }
+        :root { --primary: #e94560; --bg: #1a1a2e; --key-white: #ffffff; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: var(--bg); color: white; padding: 20px; }
+        
+        .status-box { background: #16213e; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #0f3460; }
+        #log { font-family: monospace; font-size: 0.8em; color: #00d2ff; height: 50px; overflow-y: auto; background: #000; padding: 5px; margin-top: 10px; text-align: left; }
+
+        .piano { display: flex; justify-content: center; gap: 8px; margin: 30px auto; max-width: 600px; }
+        .key { width: 60px; height: 200px; background: var(--key-white); border-radius: 0 0 8px 8px; cursor: pointer; transition: all 0.1s; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 15px; color: #333; font-weight: bold; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .key.active { background: var(--primary); color: white; transform: translateY(8px); box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+
+        .btn { padding: 15px 40px; font-size: 1.1em; cursor: pointer; background: var(--primary); color: white; border: none; border-radius: 50px; box-shadow: 0 4px 15px rgba(233, 69, 96, 0.4); transition: 0.3s; }
+        .btn:hover { transform: scale(1.05); filter: brightness(1.1); }
     </style>
 </head>
 <body>
-    <h1>🏹 實驗一：8 鍵數位物理鋼琴</h1>
-    <p>請佩戴共地手環，並觸碰 GPIO 腳位接點</p>
-    <button id="connectBtn" class="btn">連線藍牙鋼琴</button>
-    <div id="status">等待連線...</div>
 
-    <div class="piano" id="pianoWrapper">
-        <div class="key" id="k0">Do</div><div class="key" id="k1">Re</div>
-        <div class="key" id="k2">Mi</div><div class="key" id="k3">Fa</div>
-        <div class="key" id="k4">So</div><div class="key" id="k5">La</div>
-        <div class="key" id="k6">Si</div><div class="key" id="k7">Do+</div>
+    <h1>🏹 實驗一：8 鍵數位物理鋼琴</h1>
+    
+    <div class="status-box">
+        <button id="connectBtn" class="btn">🔌 連線藍牙鋼琴</button>
+        <p id="status">目前狀態：未連線</p>
+        <div id="log">系統紀錄：等待使用者啟動...</div>
     </div>
 
+    <div class="piano">
+        <div class="key" id="k0">Do</div>
+        <div class="key" id="k1">Re</div>
+        <div class="key" id="k2">Mi</div>
+        <div class="key" id="k3">Fa</div>
+        <div class="key" id="k4">So</div>
+        <div class="key" id="k5">La</div>
+        <div class="key" id="k6">Si</div>
+        <div class="key" id="k7">Do+</div>
+    </div>
+
+    <p style="font-size: 0.9em; color: #888;">
+        iPhone 請使用 <b>Bluefy App</b> | 需戴上 <b>共地手環</b>
+    </p>
+
     <script>
+        // 音頻設定
         const freqs = [261.6, 293.7, 329.6, 349.2, 392.0, 440.0, 493.9, 523.3];
-        let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let audioCtx = null;
         let oscillators = {};
 
+        function addLog(msg) {
+            const logEl = document.getElementById('log');
+            logEl.innerHTML = `> ${msg}<br>${logEl.innerHTML}`;
+        }
+
         document.getElementById('connectBtn').onclick = async () => {
+            // 點擊瞬間啟動 AudioContext
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
             try {
-                const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [0xFFE0] }] });
+                addLog("正在搜尋藍牙裝置...");
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [0xFFE0]
+                });
+
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(0xFFE0);
                 const char = await service.getCharacteristic(0xFFE1);
                 
-                document.getElementById('status').innerText = "✅ 已連線：" + device.name;
+                document.getElementById('status').innerText = `✅ 已連線：${device.name}`;
+                addLog(`連線成功：${device.name}`);
+
                 char.startNotifications();
-                char.addEventListener('characteristicvaluechanged', handleData);
-            } catch (err) { alert("連線失敗，iPhone 請使用 Bluefy App"); }
+                char.addEventListener('characteristicvaluechanged', (e) => {
+                    const rawData = new TextDecoder().decode(e.target.value).trim();
+                    addLog(`收到數據包：${rawData}`); // 方便現場 debug
+                    
+                    const states = rawData.split(',').map(s => parseInt(s.trim()));
+                    
+                    states.forEach((state, i) => {
+                        const keyEl = document.getElementById(`k${i}`);
+                        if (!keyEl) return;
+                        
+                        if (state === 1) {
+                            if (!keyEl.classList.contains('active')) {
+                                keyEl.classList.add('active');
+                                playTone(i);
+                            }
+                        } else {
+                            if (keyEl.classList.contains('active')) {
+                                keyEl.classList.remove('active');
+                                stopTone(i);
+                            }
+                        }
+                    });
+                });
+            } catch (err) {
+                addLog(`錯誤：${err.message}`);
+                console.error(err);
+            }
         };
 
-        function handleData(event) {
-            const val = new TextDecoder().decode(event.target.value);
-            const states = val.split(',').map(Number); // 解析數據包
-            
-            states.forEach((state, i) => {
-                const keyEl = document.getElementById(`k${i}`);
-                if (state === 1) {
-                    keyEl.classList.add('active');
-                    playTone(i);
-                } else {
-                    keyEl.classList.remove('active');
-                    stopTone(i);
-                }
-            });
+        function playTone(i) {
+            if (oscillators[i]) return;
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freqs[i], audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1); // 增加衰減感
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            oscillators[i] = { osc, gain };
         }
 
-        function playTone(index) {
-            if (!oscillators[index]) {
-                let osc = audioCtx.createOscillator();
-                let gain = audioCtx.createGain();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(freqs[index], audioCtx.currentTime);
-                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start();
-                oscillators[index] = { osc, gain };
-            }
-        }
-
-        function stopTone(index) {
-            if (oscillators[index]) {
-                oscillators[index].osc.stop();
-                delete oscillators[index];
+        function stopTone(i) {
+            if (oscillators[i]) {
+                oscillators[i].osc.stop();
+                delete oscillators[i];
             }
         }
     </script>
