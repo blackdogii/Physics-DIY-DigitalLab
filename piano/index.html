@@ -63,8 +63,10 @@
             try {
                 addLog("正在搜尋藍牙裝置...");
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [0xFFE0]
+                    filters: [
+                        { services: [0xFFE0] }, // 只搜尋掛有 FFE0 服務招牌的裝置
+                        { namePrefix: "Physics_" } // 選配：只搜尋名稱開頭為 Physics_ 的裝置
+                    ]
                 });
 
                 const server = await device.gatt.connect();
