@@ -1,49 +1,83 @@
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEServer.h>
-#include <BLE2902.h>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AI 數位物理鋼琴</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; }
+        .piano { display: flex; justify-content: center; margin-top: 50px; }
+        .key { width: 60px; height: 200px; border: 1px solid #333; margin: 5px; border-radius: 0 0 5px 5px; cursor: pointer; background: white; color: black; transition: 0.1s; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; font-weight: bold; }
+        .key.active { background: #e94560; color: white; transform: translateY(5px); }
+        .btn { padding: 15px 30px; font-size: 1.2em; cursor: pointer; background: #e94560; color: white; border: none; border-radius: 5px; margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🏹 實驗一：8 鍵數位物理鋼琴</h1>
+    <p>請佩戴共地手環，並觸碰 GPIO 腳位接點</p>
+    <button id="connectBtn" class="btn">連線藍牙鋼琴</button>
+    <div id="status">等待連線...</div>
 
-// 定義 8 個琴鍵腳位
-const int pianoPins[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-String deviceName = "Physics_Piano_01"; // 建議現場依編號修改
+    <div class="piano" id="pianoWrapper">
+        <div class="key" id="k0">Do</div><div class="key" id="k1">Re</div>
+        <div class="key" id="k2">Mi</div><div class="key" id="k3">Fa</div>
+        <div class="key" id="k4">So</div><div class="key" id="k5">La</div>
+        <div class="key" id="k6">Si</div><div class="key" id="k7">Do+</div>
+    </div>
 
-BLECharacteristic *pNotifyCharacteristic;
-bool deviceConnected = false;
+    <script>
+        const freqs = [261.6, 293.7, 329.6, 349.2, 392.0, 440.0, 493.9, 523.3];
+        let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let oscillators = {};
 
-class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) { deviceConnected = true; };
-    void onDisconnect(BLEServer* pServer) { deviceConnected = false; }
-};
+        document.getElementById('connectBtn').onclick = async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [0xFFE0] }] });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(0xFFE0);
+                const char = await service.getCharacteristic(0xFFE1);
+                
+                document.getElementById('status').innerText = "✅ 已連線：" + device.name;
+                char.startNotifications();
+                char.addEventListener('characteristicvaluechanged', handleData);
+            } catch (err) { alert("連線失敗，iPhone 請使用 Bluefy App"); }
+        };
 
-void setup() {
-  Serial.begin(115200);
-  for (int i = 0; i < 8; i++) {
-    pinMode(pianoPins[i], INPUT_PULLUP); // 使用內部上拉，接觸 GND 時跳變為 LOW
-  }
+        function handleData(event) {
+            const val = new TextDecoder().decode(event.target.value);
+            const states = val.split(',').map(Number); // 解析數據包
+            
+            states.forEach((state, i) => {
+                const keyEl = document.getElementById(`k${i}`);
+                if (state === 1) {
+                    keyEl.classList.add('active');
+                    playTone(i);
+                } else {
+                    keyEl.classList.remove('active');
+                    stopTone(i);
+                }
+            });
+        }
 
-  BLEDevice::init(deviceName.c_str());
-  BLEServer *pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-  BLEService *pService = pServer->createService("FFE0");
-  pNotifyCharacteristic = pService->createCharacteristic("FFE1", BLECharacteristic::PROPERTY_NOTIFY);
-  pNotifyCharacteristic->addDescriptor(new BLE2902());
-  
-  pService->start();
-  pServer->getAdvertising()->start();
-  Serial.println("鋼琴模式已啟動，等待藍牙連線...");
-}
+        function playTone(index) {
+            if (!oscillators[index]) {
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freqs[index], audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                oscillators[index] = { osc, gain };
+            }
+        }
 
-void loop() {
-  if (deviceConnected) {
-    String dataString = "";
-    for (int i = 0; i < 8; i++) {
-      // 讀取數位值並反轉（接觸 GND 變 0，我們轉成 1 代表按下）
-      int val = !digitalRead(pianoPins[i]); 
-      dataString += String(val);
-      if (i < 7) dataString += ",";
-    }
-    pNotifyCharacteristic->setValue(dataString.c_str());
-    pNotifyCharacteristic->notify(); // 發送數據包
-    delay(50); // 20Hz 採樣率，足以應付音樂遊戲
-  }
-}
+        function stopTone(index) {
+            if (oscillators[index]) {
+                oscillators[index].osc.stop();
+                delete oscillators[index];
+            }
+        }
+    </script>
+</body>
+</html>
