@@ -1,0 +1,49 @@
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+
+// 定義 8 個琴鍵腳位
+const int pianoPins[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+String deviceName = "Physics_Piano_01"; // 建議現場依編號修改
+
+BLECharacteristic *pNotifyCharacteristic;
+bool deviceConnected = false;
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) { deviceConnected = true; };
+    void onDisconnect(BLEServer* pServer) { deviceConnected = false; }
+};
+
+void setup() {
+  Serial.begin(115200);
+  for (int i = 0; i < 8; i++) {
+    pinMode(pianoPins[i], INPUT_PULLUP); // 使用內部上拉，接觸 GND 時跳變為 LOW
+  }
+
+  BLEDevice::init(deviceName.c_str());
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  BLEService *pService = pServer->createService("FFE0");
+  pNotifyCharacteristic = pService->createCharacteristic("FFE1", BLECharacteristic::PROPERTY_NOTIFY);
+  pNotifyCharacteristic->addDescriptor(new BLE2902());
+  
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("鋼琴模式已啟動，等待藍牙連線...");
+}
+
+void loop() {
+  if (deviceConnected) {
+    String dataString = "";
+    for (int i = 0; i < 8; i++) {
+      // 讀取數位值並反轉（接觸 GND 變 0，我們轉成 1 代表按下）
+      int val = !digitalRead(pianoPins[i]); 
+      dataString += String(val);
+      if (i < 7) dataString += ",";
+    }
+    pNotifyCharacteristic->setValue(dataString.c_str());
+    pNotifyCharacteristic->notify(); // 發送數據包
+    delay(50); // 20Hz 採樣率，足以應付音樂遊戲
+  }
+}
