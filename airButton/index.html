@@ -1,1 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物理實驗室：隔空感測雷達</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #1a1a2e; color: white; text-align: center; padding: 20px; }
+        .card { background: #16213e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); max-width: 600px; margin: auto; }
+        #status { color: #e94560; font-weight: bold; margin: 10px 0; }
+        #strength-val { font-size: 3rem; color: #0f3460; background: #e94560; border-radius: 10px; padding: 10px; display: inline-block; margin: 10px 0; min-width: 150px; }
+        .btn { background: #e94560; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+        .btn:disabled { background: #555; }
+        .cal-box { margin-top: 20px; border-top: 1px solid #0f3460; padding-top: 20px; text-align: left; }
+        input { background: #0f3460; border: none; color: white; padding: 8px; border-radius: 5px; width: 80px; }
+        canvas { margin-top: 20px; background: #0f3460; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📡 隔空感測物理雷達</h2>
+        <button id="connectBtn" class="btn">連線藍牙感測器</button>
+        <div id="status">狀態：尚未連線</div>
+        
+        <div>訊號強度 (ΔCount)</div>
+        <div id="strength-val">0</div>
 
+        <div class="cal-box">
+            <h4>📐 物理距離校正</h4>
+            <p>1. 將手放在距離銅箔 10cm 處</p>
+            <p>2. 目前偵測強度為：<span id="cal-hint">--</span></p>
+            <button class="btn" onclick="calibrateK()">設定為 10cm</button>
+            <div id="dist-result" style="margin-top:10px; color:#4ecca3;">預估距離：-- cm</div>
+        </div>
+
+        <canvas id="radarChart"></canvas>
+    </div>
+
+    <script>
+        let bleDevice, char;
+        let k_constant = 1000; // 初始物理常數
+        const dataBuffer = Array(30).fill(0);
+        const labels = Array(30).fill("");
+
+        // 初始化圖表
+        const ctx = document.getElementById('radarChart').getContext('2d');
+        const radarChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '電荷強度變動',
+                    data: dataBuffer,
+                    borderColor: '#e94560',
+                    tension: 0.3,
+                    fill: true,
+                    backgroundColor: 'rgba(233, 69, 96, 0.2)'
+                }]
+            },
+            options: { scales: { y: { min: 0, max: 2000 } }, animation: false }
+        });
+
+        async function connectBLE() {
+            try {
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: 'Physics_Radar' }],
+                    optionalServices: ['ffe0']
+                });
+                const server = await bleDevice.gatt.connect();
+                const service = await server.getPrimaryService('ffe0');
+                char = await service.getCharacteristic('ffe1');
+                
+                document.getElementById('status').innerText = "狀態：已連線 (" + bleDevice.name + ")";
+                document.getElementById('connectBtn').disabled = true;
+
+                await char.startNotifications();
+                char.addEventListener('characteristicvaluechanged', handleData);
+            } catch (err) {
+                console.log(err);
+                alert("連線失敗：" + err);
+            }
+        }
+
+        function handleData(event) {
+            const val = new TextDecoder().decode(event.target.value);
+            const strength = parseInt(val);
+            
+            // 更新 UI
+            document.getElementById('strength-val').innerText = strength;
+            document.getElementById('cal-hint').innerText = strength;
+
+            // 物理距離計算: d = k / sqrt(Strength)
+            if (strength > 10) {
+                const dist = (k_constant / Math.sqrt(strength)).toFixed(1);
+                document.getElementById('dist-result').innerText = `預估距離：${dist} cm`;
+            } else {
+                document.getElementById('dist-result').innerText = `預估距離：超出範圍`;
+            }
+
+            // 更新圖表
+            dataBuffer.shift();
+            dataBuffer.push(strength);
+            radarChart.update();
+        }
+
+        function calibrateK() {
+            const s = parseInt(document.getElementById('cal-hint').innerText);
+            if (s > 0) {
+                // 在 10cm 時反推 k: k = 10 * sqrt(s)
+                k_constant = 10 * Math.sqrt(s);
+                alert(`校正完成！物理常數 k 已設為 ${k_constant.toFixed(0)}`);
+            }
+        }
+
+        document.getElementById('connectBtn').addEventListener('click', connectBLE);
+    </script>
+</body>
+</html>
