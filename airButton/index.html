@@ -3,83 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>物理實驗室：隔空感測雷達 (修正版)</title>
+    <title>物理雷達 v1.2 - 校正模式</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: sans-serif; background: #1a1a2e; color: white; text-align: center; padding: 20px; }
-        .card { background: #16213e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); max-width: 600px; margin: auto; }
-        #strength-val { font-size: 3rem; color: #0f3460; background: #e94560; border-radius: 10px; padding: 10px; display: inline-block; margin: 10px 0; min-width: 150px; }
-        .btn { background: #e94560; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin: 5px; }
-        .btn:disabled { background: #555; }
-        .export-btn { background: #4ecca3; }
-        canvas { margin-top: 20px; background: #0f3460; border-radius: 10px; }
+        .card { background: #16213e; padding: 20px; border-radius: 15px; max-width: 600px; margin: auto; }
+        #strength-val { font-size: 3rem; color: #0f3460; background: #e94560; border-radius: 10px; padding: 10px; min-width: 120px; display: inline-block; }
+        .btn { background: #e94560; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; margin: 5px; font-weight: bold; }
+        .btn-cal { background: #4ecca3; }
+        #instruction { color: #f9d342; font-size: 1.2rem; margin: 15px 0; min-height: 1.5em; }
+        canvas { background: #0f3460; border-radius: 10px; margin-top: 20px; height: 250px !important; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>📡 隔空感測物理雷達 v1.1</h2>
+        <h2>📡 隔空感測物理雷達 v1.2</h2>
         <button id="connectBtn" class="btn">連線藍牙感測器</button>
-        <button id="exportBtn" class="btn export-btn">導出 CSV 數據</button>
-        <div id="status" style="color:#e94560; margin:10px;">狀態：尚未連線</div>
+        <button id="calBtn" class="btn btn-cal" disabled>開始校正</button>
+        
+        <div id="instruction">請先連線藍牙設備...</div>
         
         <div id="strength-val">0</div>
-        <div id="dist-result" style="color:#4ecca3; font-size:1.2rem;">預估距離：-- cm</div>
+        <div id="dist-display" style="font-size: 1.5rem; color: #4ecca3; margin-top: 10px; display: none;">
+            預估距離：<span id="dist-val">--</span> cm
+        </div>
 
         <canvas id="radarChart"></canvas>
     </div>
 
     <script>
-        let bleDevice, char;
-        let k_constant = 1000;
-        let logData = [["Timestamp", "Signal_Strength"]]; // CSV 數據容器
+        let char;
+        let baseline = 0, k_constant = 0;
+        let isCalibrated = false;
+        let currentRaw = 0;
+        const chartData = Array(50).fill(0);
 
-        async function connectBLE() {
+        // 圖表修復：確保 Canvas 正確渲染
+        const ctx = document.getElementById('radarChart').getContext('2d');
+        const radarChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(50).fill(""),
+                datasets: [{ label: '即時訊號強度', data: chartData, borderColor: '#e94560', fill: true, backgroundColor: 'rgba(233, 69, 96, 0.1)', tension: 0.4 }]
+            },
+            options: { responsive: true, animation: false, scales: { y: { min: 0, max: 4095 } } }
+        });
+
+        async function connect() {
             try {
-                // 關鍵修正：使用 0xffe0 十六進位格式，解決 image_ad2bfa.png 的錯誤
-                bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ namePrefix: 'Physics_Radar' }],
-                    optionalServices: [0xffe0] 
-                });
-                
-                const server = await bleDevice.gatt.connect();
+                const device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'Physics_Radar' }], optionalServices: [0xffe0] });
+                const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(0xffe0);
                 char = await service.getCharacteristic(0xffe1);
                 
-                document.getElementById('status').innerText = "狀態：已連線";
+                document.getElementById('instruction').innerText = "連線成功！請「移開雙手」並按下校正鈕。";
+                document.getElementById('calBtn').disabled = false;
                 await char.startNotifications();
                 char.addEventListener('characteristicvaluechanged', (e) => {
-                    const val = new TextDecoder().decode(e.target.value);
-                    const strength = parseInt(val);
-                    updateUI(strength);
-                    logData.push([new Date().toLocaleTimeString(), strength]);
+                    currentRaw = parseInt(new TextDecoder().decode(e.target.value));
+                    updateUI();
                 });
-            } catch (err) {
-                alert("連線失敗：" + err);
+            } catch (err) { alert("連線失敗：" + err); }
+        }
+
+        function updateUI() {
+            document.getElementById('strength-val').innerText = currentRaw;
+            
+            // 更新圖表數據
+            chartData.shift();
+            chartData.push(currentRaw);
+            radarChart.update();
+
+            // 如果已校正，顯示距離
+            if (isCalibrated) {
+                let diff = Math.abs(currentRaw - baseline);
+                if (diff > 5) {
+                    let d = (k_constant / Math.sqrt(diff)).toFixed(1);
+                    document.getElementById('dist-val').innerText = d;
+                } else {
+                    document.getElementById('dist-val').innerText = "> 30";
+                }
             }
         }
 
-        function updateUI(strength) {
-            document.getElementById('strength-val').innerText = strength;
-            if (strength > 10) {
-                const dist = (k_constant / Math.sqrt(strength)).toFixed(1);
-                document.getElementById('dist-result').innerText = `預估距離：${dist} cm`;
+        async function startCalibration() {
+            const ins = document.getElementById('instruction');
+            document.getElementById('calBtn').disabled = true;
+            document.getElementById('dist-display').style.display = "none";
+            isCalibrated = false;
+
+            // 步驟 1: 標定背景 (手離開)
+            ins.innerText = "1. 請確保手已離開... (標定中)";
+            await new Promise(r => setTimeout(r, 2000));
+            baseline = currentRaw;
+
+            // 步驟 2: 標定 5cm 參考點
+            let count = 3;
+            let timer = setInterval(() => {
+                ins.innerText = `2. 請在 ${count} 秒後將手放在「5cm」處...`;
+                if (count <= 0) {
+                    clearInterval(timer);
+                    ins.innerText = "請固定手部位置於 5cm...";
+                    setTimeout(() => finishCalibration(), 2000);
+                }
+                count--;
+            }, 1000);
+        }
+
+        function finishCalibration() {
+            let diff = Math.abs(currentRaw - baseline);
+            if (diff > 20) {
+                // 根據 d = k / sqrt(diff) 反推 k: k = 5 * sqrt(diff)
+                k_constant = 5 * Math.sqrt(diff);
+                isCalibrated = true;
+                document.getElementById('instruction').innerText = "✅ 校正完畢！可以開始量測。";
+                document.getElementById('dist-display').style.display = "block";
+                document.getElementById('calBtn').disabled = false;
+            } else {
+                document.getElementById('instruction').innerText = "❌ 訊號變化太小，請重新校正。";
+                document.getElementById('calBtn').disabled = false;
             }
-            updateChart(strength);
         }
 
-        function exportCSV() {
-            let csvContent = "data:text/csv;charset=utf-8," + logData.map(e => e.join(",")).join("\n");
-            let encodedUri = encodeURI(csvContent);
-            let link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", "radar_data.csv");
-            document.body.appendChild(link);
-            link.click();
-        }
-
-        // 圖表邏輯 (省略...維持原樣)
-        document.getElementById('connectBtn').addEventListener('click', connectBLE);
-        document.getElementById('exportBtn').addEventListener('click', exportCSV);
+        document.getElementById('connectBtn').addEventListener('click', connect);
+        document.getElementById('calBtn').addEventListener('click', startCalibration);
     </script>
 </body>
 </html>
